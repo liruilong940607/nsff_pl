@@ -1,9 +1,11 @@
-import os
-import glob
 import argparse
-from tqdm import tqdm
+import glob
+import os
 from pathlib import Path
+
 import cv2
+from tqdm import tqdm
+
 
 def parse_args():
 
@@ -11,13 +13,13 @@ def parse_args():
     parser.add_argument('--root_dir', type=str, help='data root directory', required=True)
     parser.add_argument('--cuda-device',type=str,default='0',help='cuda device to use')
 
-    parser.add_argument('--max-width', type=int, default=1280, help='max image width')
-    parser.add_argument('--max-height', type=int, default=720, help='max image height')
-    parser.add_argument(
-        '--images-resized', default='images_resized', help='location for resized/renamed images')
-    parser.add_argument('--image_input', default='frames', help='location for original images')
-    parser.add_argument(
-        '--undistorted-output', default='images', help='location of undistorted images')
+    # parser.add_argument('--max-width', type=int, default=1280, help='max image width')
+    # parser.add_argument('--max-height', type=int, default=720, help='max image height')
+    # parser.add_argument(
+    #     '--images-resized', default='images_resized', help='location for resized/renamed images')
+    # parser.add_argument('--image_input', default='frames', help='location for original images')
+    # parser.add_argument(
+    #     '--undistorted-output', default='images', help='location of undistorted images')
     parser.add_argument(
         '--overwrite', default=False,action='store_true', help='overwrite cache')
 
@@ -126,9 +128,9 @@ def generate_flow(args):
 if __name__ == '__main__':
     args = parse_args()
 
-    resize_frames(args)
-    generate_masks(args)
-    run_colmap(args)
+    # resize_frames(args)
+    # generate_masks(args)
+    # run_colmap(args)
     generate_depth(args)
     generate_flow(args)
     print('finished!')
