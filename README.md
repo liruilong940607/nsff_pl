@@ -225,12 +225,28 @@ Now you can start training!
 Run the following command (modify the parameters according to `opt.py`):
 ```j
 python train.py \
-  --dataset_name monocular --root_dir $ROOT_DIR \
-  --img_wh 360 480 --start_end 0 163 \
-  --N_samples 128 --N_importance 0 --encode_t --use_viewdir \
+  --dataset_name monocular --root_dir ./data/hang-dance-0_120-550-1_aligned_gq95_bk120 \
+  --img_wh 360 480 --start_end 0 429 \
+  --N_samples 128 --N_importance 0 --encode_t \
   --num_epochs 50 --batch_size 512 \
   --optimizer adam --lr 5e-4 --lr_scheduler cosine \
-  --exp_name exp
+  --exp_name hang-dance-0_120-550-1_aligned_gq95_bk120
+
+python train.py \
+  --dataset_name monocular --root_dir ./data/mochi-high-five_0-180-1_aligned_gq90_bk10 \
+  --img_wh 360 480 --start_end 0 163 \
+  --N_samples 128 --N_importance 0 --encode_t \
+  --num_epochs 50 --batch_size 512
+  --optimizer adam --lr 5e-4 --lr_scheduler cosine \
+  --exp_name mochi-high-five_0-180-1_aligned_gq90_bk10
+
+python train.py \
+  --dataset_name monocular --root_dir ./data/ruilong-dance-1_0-444-1_aligned_gq95_bk120 \
+  --img_wh 360 480 --start_end 0 443 \
+  --N_samples 128 --N_importance 0 --encode_t \
+  --num_epochs 50 --batch_size 512 \
+  --optimizer adam --lr 5e-4 --lr_scheduler cosine \
+  --exp_name ruilong-dance-1_0-444-1_aligned_gq95_bk120
 ```
 
 I also implemented a hard sampling strategy to improve the quality of the hard regions. Add `--hard_sampling` to enable it.
@@ -250,8 +266,8 @@ E.g.
 python eval.py \
   --dataset_name monocular --root_dir $ROOT_DIR \
   --N_samples 128 --N_importance 0 --img_wh 360 480 --start_end 0 163 \
-  --encode_t --output_transient \
-  --split test_fixview8_interp0 --video_format gif --fps 5 \
+  --output_transient \
+  --split test_fixview8_interp1 --video_format gif --fps 5 \
   --ckpt_path ckpts/exp/epoch=4.ckpt --scene_name exp
 ```
 
@@ -260,6 +276,7 @@ More specifically, the `split` argument specifies which novel view to generate:
 *  `test_spiral`: spiral path over the whole sequence, with time gradually advances (integer time for now)
 *  `test_spiralX`: fix the time to `X` and generate spiral path around training view `X`.
 *  `test_fixviewX_interpY`: fix the view to training pose `X` and interpolate the time from start to end, adding `Y` frames between each integer timestamps.
+*  `test_xv`: cross-view rendeirng (default 4 x 4).
 
 # :warning: Other differences with the original paper
 

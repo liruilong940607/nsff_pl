@@ -1,15 +1,16 @@
-import cv2
-import torch
-from torch.utils.data import Dataset
 import glob
-import numpy as np
 import os
 from collections import defaultdict
-from scipy.stats import linregress
+
+import cv2
+import numpy as np
+import torch
 from PIL import Image
+from scipy.stats import linregress
+from torch.utils.data import Dataset
 from torchvision import transforms as T
 
-from . import ray_utils, depth_utils, colmap_utils, flowlib
+from . import colmap_utils, depth_utils, flowlib, ray_utils
 
 
 class MonocularDataset(Dataset):

@@ -22,6 +22,8 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 def get_opts():
     parser = ArgumentParser()
+    parser.add_argument('--root_dir_raw', type=str, required=True,
+                        help='raw root directory of dataset')
     parser.add_argument('--root_dir', type=str, required=True,
                         help='root directory of dataset')
     parser.add_argument('--dataset_name', type=str, default='monocular',
@@ -121,23 +123,24 @@ if __name__ == "__main__":
     args = get_opts()
     w, h = args.img_wh
 
-    kwargs = {'root_dir': args.root_dir,
-              'split': args.split,
-              'img_wh': (w, h),
-              'start_end': tuple(args.start_end)}
+    # dataset
+    if args.split == "test_xv":
+        kwargs = {
+            'root_dir': args.root_dir,
+            'split': "test",
+            'img_wh': (w, h),
+            'start_end': tuple(args.start_end)
+        }
+    else:
+        raise ValueError(args.split)
     dataset = dataset_dict[args.dataset_name](**kwargs)
 
     dir_name = f'results/{args.dataset_name}/{args.scene_name}'
     os.makedirs(dir_name, exist_ok=True)
 
     kwargs = {'K': dataset.K, 'dataset': dataset}
-
-    if args.split.startswith('test_fixview') and int(args.split.split('_')[-1][6:])>0:
-        kwargs['output_transient'] = True
-        kwargs['output_transient_flow'] = ['fw', 'bw']
-    else:
-        kwargs['output_transient'] = args.output_transient
-        kwargs['output_transient_flow'] = []
+    kwargs['output_transient'] = args.output_transient
+    kwargs['output_transient_flow'] = []
 
     embeddings = {'xyz': PosEmbedding(9, 10), 'dir': PosEmbedding(3, 4)}
 
@@ -169,92 +172,33 @@ if __name__ == "__main__":
         models['coarse'] = nerf_coarse
 
     imgs, depths = [], []
-    if args.split == 'test':
-        psnrs = np.zeros((dataset.N_frames, 2))
-        ssims = np.zeros((dataset.N_frames, 2))
-        lpipss = np.zeros((dataset.N_frames, 2))
 
-        lpips_model = lpips.LPIPS(net='alex', spatial=True)
+    if args.split == "test_xv":
+        from utils.nerfbios import get_xv_ids
+        idxs_xv = get_xv_ids(data_dir=args.root_dir_raw, num_xv_steps=4)
+        data_xv = [dataset[idx] for idx in idxs_xv]
 
-    last_results = None
-    for i in tqdm(range(len(dataset))):
-        if args.split.startswith('test_fixview') and i==len(dataset)-1: # last frame
-            img_pred = torch.clip(last_results['rgb_fine'].view(h, w, 3), 0, 1)
-            img_pred_ = (255*img_pred.numpy()).astype(np.uint8)
-            imgs += [img_pred_]
-            imageio.imwrite(os.path.join(dir_name, f'{i:03d}_{int(0):03d}.png'), img_pred_)
-            if args.save_depth:
-                depths += [save_depth(last_results['depth_fine'], h, w,
-                                      dir_name, f'depth_{i:03d}_{int(0):03d}.png')]
-        else:
-            sample = dataset[i]
-            # if args.split.startswith('test_spiral') and 'view_dir' not in kwargs:
-            #     kwargs['view_dir'] = dataset[0]['rays'][:, 3:6].to(device)
-            ts = None if 'ts' not in sample else sample['ts'].to(device)
-            if last_results is None:
-                results = f(models, embeddings, sample['rays'].to(device), ts,
-                            dataset.N_frames-1, args.N_samples, args.N_importance,
-                            args.chunk, **kwargs)
-            else: results = last_results
-
-            if args.split.startswith('test_fixview'):
-                interp = int(args.split.split('_')[-1][6:])
-                results_tp1 = f(models, embeddings, sample['rays'].to(device), ts+1,
-                                dataset.N_frames-1, args.N_samples, args.N_importance,
-                                args.chunk, **kwargs)
-                for dt in np.linspace(0, 1, interp+1)[:-1]: # interp images
-                    if dt == 0:
-                        img_pred = results['rgb_fine'].view(h, w, 3)
-                        depth_pred = results['depth_fine']
-                    else:
-                        img_pred, depth_pred = interpolate(results, results_tp1, 
-                                        dt, dataset.Ks[sample['cam_ids']], sample['c2w'], (w, h))
-                    img_pred = torch.clip(img_pred, 0, 1)
-                    img_pred_ = (255*img_pred.numpy()).astype(np.uint8)
-                    imgs += [img_pred_]
-                    imageio.imwrite(os.path.join(dir_name, f'{i:03d}_{int(dt*100):03d}.png'), img_pred_)
-                    if args.save_depth:
-                        depths += [save_depth(depth_pred, h, w,
-                                              dir_name, f'depth_{i:03d}_{int(dt*100):03d}.png')]
-                last_results = results_tp1
-            else: # one image
+        imgs = []
+        for data_ts in data_xv:
+            imgs.append([])
+            for data_view in data_xv:
+                results = f(
+                    models, embeddings, 
+                    data_view["rays"].to(device), data_ts["ts"].to(device),
+                    dataset.N_frames-1, args.N_samples, args.N_importance,
+                    args.chunk, **kwargs
+                )
+                # one image
                 img_pred = torch.clip(results['rgb_fine'].view(h, w, 3), 0, 1)
                 img_pred_ = (img_pred.numpy()*255).astype(np.uint8)
-                imgs += [img_pred_]
-                imageio.imwrite(os.path.join(dir_name, f'{i:03d}.png'), img_pred_)
-                if args.save_depth:
-                    depths += [save_depth(results['depth_fine'], h, w,
-                                          dir_name, f'depth_{i:03d}.png')]
+                imgs[-1].append(img_pred_)
+            imgs[-1] = np.hstack(imgs[-1])
+        imgs = np.vstack(imgs)
 
-        if args.split == 'test':
-            rgbs = sample['rgbs']
-            img_gt = rgbs.view(h, w, 3)
-            psnrs[i, 0] = metrics.psnr(img_gt, img_pred).item()
-            ssims[i, 0] = metrics.ssim(img_gt, img_pred).item()
-            lpipss[i, 0] = metrics.lpips(lpips_model, img_gt, img_pred).item()
-            if 'mask' in sample:
-                mask = sample['mask'].view(h, w)
-                psnrs[i, 1] = metrics.psnr(img_gt, img_pred, mask==0).item()
-                ssims[i, 1] = metrics.ssim(img_gt, img_pred, mask==0).item()
-                lpipss[i, 1] = metrics.lpips(lpips_model, img_gt, img_pred, mask==0).item()
-
-    if args.split == 'test':
-        mean_psnr = np.nanmean(psnrs, 0)
-        mean_ssim = np.nanmean(ssims, 0)
-        mean_lpips = np.nanmean(lpipss, 0)
-
-        np.save(os.path.join(dir_name, 'psnr.npy'), psnrs)
-        np.save(os.path.join(dir_name, 'ssim.npy'), ssims)
-        np.save(os.path.join(dir_name, 'lpips.npy'), lpipss)
-
-        print(f'Score \t Whole image  \t Dynamic only')
-        print(f'-------------------------------------')
-        print(f'PSNR  \t {mean_psnr[0]:.4f} \t {mean_psnr[1]:.4f}')
-        print(f'SSIM  \t {mean_ssim[0]:.4f} \t {mean_ssim[1]:.4f}')
-        print(f'LPIPS \t {mean_lpips[0]:.4f} \t {mean_lpips[1]:.4f}')
-
-    imageio.mimsave(os.path.join(dir_name, f'{args.scene_name}.{args.video_format}'),
-                    imgs, fps=args.fps)
-    if args.save_depth:
-        imageio.mimsave(os.path.join(dir_name, f'depth_{args.scene_name}.{args.video_format}'),
-                        depths, fps=args.fps)
+    else:
+        raise NotImplementedError
+        
+    imageio.imwrite(
+        os.path.join(dir_name, f'{args.scene_name}.jpg'),
+        imgs
+    )
