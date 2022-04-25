@@ -81,7 +81,7 @@ class MonocularDataset(Dataset):
         poses = np.linalg.inv(w2c_mats)[:, :3] # (N_frames, 3, 4)
 
         # read bounds
-        pts3d = colmap_utils.read_points3d_binary(os.path.join(self.root_dir,
+        pts3d = colmap_utils.read_points3D_binary(os.path.join(self.root_dir,
                                                                'sparse/0/points3D.bin'))
         pts_w = np.zeros((1, 3, len(pts3d))) # (1, 3, N_points)
         visibilities = np.zeros((len(poses), len(pts3d))) # (N_frames, N_points)
