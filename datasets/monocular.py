@@ -88,9 +88,13 @@ class MonocularDataset(Dataset):
         for i, k in enumerate(pts3d):
             pts_w[0, :, i] = pts3d[k].xyz
             for j in pts3d[k].image_ids:
-                if self.start_frame <= j-1 < self.end_frame:
-                    visibilities[j-1-self.start_frame, i] = 1
-
+                # FIXME: iphone data image id starts from 0, currently a hack here
+                if ("_aligned_" in self.root_dir) or ("Idle_2" in self.root_dir):
+                    if self.start_frame <= j < self.end_frame:
+                        visibilities[j-self.start_frame, i] = 1
+                else:
+                    if self.start_frame <= j-1 < self.end_frame:
+                        visibilities[j-1-self.start_frame, i] = 1
         min_depth = 1e8
         for i in range(self.N_frames):
             # for each image, compute the nearest depth according to real depth from COLMAP
