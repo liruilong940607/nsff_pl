@@ -167,6 +167,30 @@ CUDA_VISIBLE_DEVICES=9 python train.py \
   --num_epochs 30 --batch_size 512 \
   --optimizer adam --lr 5e-4 --lr_scheduler cosine \
   --exp_name teddy-move_0-350-1_aligned_gq95_bk120
+
+CUDA_VISIBLE_DEVICES=0 python train.py \
+  --dataset_name monocular --root_dir ./data/hang-dance-1_0-250-1_aligned_gq95_bk120 \
+  --img_wh 360 480 --start_end 0 250 \
+  --N_samples 128 --N_importance 0 --encode_t \
+  --num_epochs 30 --batch_size 512 \
+  --optimizer adam --lr 5e-4 --lr_scheduler cosine \
+  --exp_name hang-dance-1_0-250-1_aligned_gq95_bk120
+
+CUDA_VISIBLE_DEVICES=1 python train.py \
+  --dataset_name monocular --root_dir ./data/wheel-rotate_0-250-1_aligned_gq95_bk120 \
+  --img_wh 360 480 --start_end 0 250 \
+  --N_samples 128 --N_importance 0 --encode_t \
+  --num_epochs 30 --batch_size 512 \
+  --optimizer adam --lr 5e-4 --lr_scheduler cosine \
+  --exp_name wheel-rotate_0-250-1_aligned_gq95_bk120
+
+CUDA_VISIBLE_DEVICES=2 python train.py \
+  --dataset_name monocular --root_dir ./data/chair-rotate_66-180-1_aligned_gq95_bk120 \
+  --img_wh 360 480 --start_end 0 180 \
+  --N_samples 128 --N_importance 0 --encode_t \
+  --num_epochs 30 --batch_size 512 \
+  --optimizer adam --lr 5e-4 --lr_scheduler cosine \
+  --exp_name chair-rotate_66-180-1_aligned_gq95_bk120
 ```
 
 ```
