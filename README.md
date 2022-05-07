@@ -280,6 +280,10 @@ python eval.py \
   --ckpt_path ckpts/exp/epoch=4.ckpt --scene_name exp
 ```
 
+```
+CUDA_VISIBLE_DEVICES=3 python eval_nerfbios.py   --dataset_name monocular --root_dir ./data/hang-dance-1_0-250-1_aligned_gq95_bk120   --N_samples 128 --N_importance 0  --encode_t --img_wh 360 480 --start_end 0 163   --output_transient   --split test_xv --video_format mp4 --fps 5   --ckpt_path ckpts/hang-dance-1_0-250-1_aligned_gq95_bk120/epoch=29.ckpt   --scene_name hang-dance-1_0-250-1_aligned_gq95_bk120   --root_dir_raw /home/ruilongli/workspace/nerfbios/datasets/iphone-captures_v3/hang-dance-1_0-250-1_aligned_gq95_bk120
+```
+
 More specifically, the `split` argument specifies which novel view to generate:
 *  `test`: test on training pose and times
 *  `test_spiral`: spiral path over the whole sequence, with time gradually advances (integer time for now)
