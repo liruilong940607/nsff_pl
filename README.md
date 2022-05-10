@@ -240,6 +240,16 @@ python train.py \
   --optimizer adam --lr 5e-4 --lr_scheduler cosine \
   --exp_name mochi-high-five_0-180-1_aligned_gq90_bk10
 
+python eval_nerfbios.py \
+  --dataset_name monocular --root_dir ./data/mochi-high-five_0-180-1_aligned_gq90_bk10 \
+  --img_wh 360 480 --start_end 0 163 \
+  --N_samples 128 --N_importance 0  --encode_t \
+  --output_transient \
+  --split eval_train \
+  --ckpt_path ckpts/mochi-high-five_0-180-1_aligned_gq90_bk10/epoch=49.ckpt \
+  --scene_name mochi-high-five_0-180-1_aligned_gq90_bk10 \
+  --root_dir_raw /home/ruilongli/workspace/nerfbios/datasets/iphone-captures_v3/mochi-high-five_0-180-1_aligned_gq90_bk10
+
 python train.py \
   --dataset_name monocular --root_dir ./data/ruilong-dance-1_0-444-1_aligned_gq95_bk120 \
   --img_wh 360 480 --start_end 0 443 \

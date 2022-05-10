@@ -191,6 +191,10 @@ class MonocularDataset(Dataset):
             if self.hard_sampling:
                 self.weights = [np.ones(self.img_wh[0]*self.img_wh[1])
                                 for _ in range(self.N_frames)]
+        
+        elif self.split == 'eval_train':
+            self.poses = self.poses
+            self.image_paths = self.image_paths
 
         elif self.split == 'test':
             self.poses_test = self.poses.copy()
@@ -257,6 +261,28 @@ class MonocularDataset(Dataset):
             if self.split == 'val':
                 c2w = torch.FloatTensor(self.poses[self.N_frames//2])
                 t = self.N_frames//2
+
+            elif self.split == 'eval_train':
+                c2w = torch.FloatTensor(self.poses[idx])
+                t = idx
+                directions = ray_utils.get_ray_directions(self.img_wh[1], self.img_wh[0], self.K)
+                rays_o, rays_d = ray_utils.get_rays(directions, c2w)
+                shift_near = -min(-1.0, c2w[2, 3])
+                rays_o, rays_d = ray_utils.get_ndc_rays(self.K, 1.0, 
+                                                        shift_near, rays_o, rays_d)
+                rays_t = t * torch.ones(len(rays_o), dtype=torch.long) # (h*w)
+                rays = torch.cat([rays_o, rays_d], 1) # (h*w, 6)
+
+                sample = {'rays': rays, 'ts': rays_t, 'c2w': c2w}
+                
+                sample['cam_ids'] = 0
+                img = Image.open(self.image_paths[t]).convert('RGB')
+                img = img.resize(self.img_wh, Image.LANCZOS)
+                img = self.transform(img) # (3, h, w)
+                img = img.view(3, -1).T # (h*w, 3)
+                sample['rgbs'] = img
+                return sample
+
             else:
                 c2w = torch.FloatTensor(self.poses_test[idx])
                 if self.split == 'test':

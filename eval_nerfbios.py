@@ -131,6 +131,13 @@ if __name__ == "__main__":
             'img_wh': (w, h),
             'start_end': tuple(args.start_end)
         }
+    if args.split == "eval_train":
+        kwargs = {
+            'root_dir': args.root_dir,
+            'split': "eval_train",
+            'img_wh': (w, h),
+            'start_end': tuple(args.start_end)
+        }
     else:
         raise ValueError(args.split)
     dataset = dataset_dict[args.dataset_name](**kwargs)
@@ -194,11 +201,39 @@ if __name__ == "__main__":
                 imgs[-1].append(img_pred_)
             imgs[-1] = np.hstack(imgs[-1])
         imgs = np.vstack(imgs)
+        imageio.imwrite(
+            os.path.join(dir_name, f'{args.scene_name}.jpg'),
+            imgs
+        )
+
+    elif args.split == "eval_train":
+        os.makedirs(os.path.join(dir_name, f'{args.split}'), exist_ok=True)
+        psnrs = []
+        for id, data in tqdm(enumerate(dataset)):
+            with torch.no_grad():
+                results = f(
+                    models, embeddings, 
+                    data["rays"].to(device), data["ts"].to(device),
+                    dataset.N_frames-1, args.N_samples, args.N_importance,
+                    args.chunk, **kwargs
+                )
+            # one image
+            img_gt = data['rgbs'].view(h, w, 3)
+            img_pred = torch.clip(results['rgb_fine'].view(h, w, 3), 0, 1)
+            psnrs.append(metrics.psnr(img_gt, img_pred).item())
+            # vis
+            imageio.imwrite(
+                os.path.join(
+                    dir_name, 
+                    f'{args.split}', 
+                    '%03d_%04d.jpg' % (data["cam_ids"], id)
+                ),
+                (torch.hstack([img_pred, img_gt]).numpy()*255).astype(np.uint8)
+            )
+        psnrs = sum(psnrs) / len(psnrs)
+        with open(os.path.join(dir_name, f'{args.split}', 'psnr.txt'), 'w') as fp:
+            fp.write("psnr: %.3f" % psnrs)                    
 
     else:
         raise NotImplementedError
         
-    imageio.imwrite(
-        os.path.join(dir_name, f'{args.scene_name}.jpg'),
-        imgs
-    )
