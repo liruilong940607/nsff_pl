@@ -522,7 +522,7 @@ def average_poses(poses):
     return pose_avg
 
 
-def center_poses(poses):
+def center_poses(poses, pose_avg=None):
     """
     Center the poses so that we can use NDC.
     See https://github.com/bmild/nerf/issues/34
@@ -533,8 +533,8 @@ def center_poses(poses):
     Outputs:
         poses_centered: (N_images, 3, 4) the centered poses
     """
-
-    pose_avg = average_poses(poses) # (3, 4)
+    if pose_avg is None:
+        pose_avg = average_poses(poses) # (3, 4)
     pose_avg_homo = np.eye(4)
     pose_avg_homo[:3] = pose_avg # convert to homogeneous coordinate for faster computation
                                  # by simply adding 0, 0, 0, 1 as the last row

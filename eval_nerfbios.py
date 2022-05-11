@@ -122,6 +122,7 @@ def save_depth(depth, h, w, dir_name, filename):
 if __name__ == "__main__":
     args = get_opts()
     w, h = args.img_wh
+    print ("args.root_dir", args.root_dir)
 
     # dataset
     if args.split == "test_xv":
@@ -131,12 +132,13 @@ if __name__ == "__main__":
             'img_wh': (w, h),
             'start_end': tuple(args.start_end)
         }
-    if args.split == "eval_train":
+    if args.split in ["eval_train", "eval_test"]:
         kwargs = {
             'root_dir': args.root_dir,
-            'split': "eval_train",
+            'split': args.split,
             'img_wh': (w, h),
-            'start_end': tuple(args.start_end)
+            'start_end': tuple(args.start_end),
+            'raw_root_dir': args.root_dir_raw,
         }
     else:
         raise ValueError(args.split)
@@ -206,7 +208,7 @@ if __name__ == "__main__":
             imgs
         )
 
-    elif args.split == "eval_train":
+    elif args.split in ["eval_train", "eval_test"]:
         os.makedirs(os.path.join(dir_name, f'{args.split}'), exist_ok=True)
         psnrs = []
         for id, data in tqdm(enumerate(dataset)):
@@ -220,13 +222,19 @@ if __name__ == "__main__":
             # one image
             img_gt = data['rgbs'].view(h, w, 3)
             img_pred = torch.clip(results['rgb_fine'].view(h, w, 3), 0, 1)
-            psnrs.append(metrics.psnr(img_gt, img_pred).item())
+            
+            mask_gt = data.get("masks", None)
+            if mask_gt is not None:
+                mask_gt = mask_gt.view(h, w, 3)[..., 0] > 0.5
+                psnrs.append(metrics.psnr(img_gt[mask_gt], img_pred[mask_gt]).item())
+            else:            
+                psnrs.append(metrics.psnr(img_gt, img_pred).item())
             # vis
             imageio.imwrite(
                 os.path.join(
                     dir_name, 
                     f'{args.split}', 
-                    '%03d_%04d.jpg' % (data["cam_ids"], id)
+                    '%s' % data["image_id"]
                 ),
                 (torch.hstack([img_pred, img_gt]).numpy()*255).astype(np.uint8)
             )

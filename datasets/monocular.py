@@ -15,7 +15,7 @@ from . import colmap_utils, depth_utils, flowlib, ray_utils
 
 class MonocularDataset(Dataset):
     def __init__(self, root_dir, split='train', img_wh=(512, 288),
-                 start_end=(0, 30), cache_dir=None, hard_sampling=False):
+                 start_end=(0, 30), cache_dir=None, hard_sampling=False, raw_root_dir=None):
         """
         split options:
             train - training mode (used in train.py) rays are from all images
@@ -36,6 +36,7 @@ class MonocularDataset(Dataset):
         self.end_frame = start_end[1]
         self.cache_dir = cache_dir
         self.hard_sampling = hard_sampling
+        self.raw_root_dir = raw_root_dir
         self.define_transforms()
         self.read_meta()
 
@@ -123,6 +124,7 @@ class MonocularDataset(Dataset):
         # Step 2: correct poses
         # change "right down front" of COLMAP to "right up back"
         self.poses = np.concatenate([poses[..., 0:1], -poses[..., 1:3], poses[..., 3:4]], -1)
+        self.poses_train = self.poses.copy()
         self.poses = colmap_utils.center_poses(self.poses)
 
         # Step 3: correct scale
@@ -196,6 +198,71 @@ class MonocularDataset(Dataset):
             self.poses = self.poses
             self.image_paths = self.image_paths
 
+        elif self.split == "eval_test":
+            camdata = colmap_utils.read_cameras_binary(
+                os.path.join(self.raw_root_dir, "colmap_test", '2x/sparse/cameras.bin'))
+            H = camdata[1].height
+            W = camdata[1].width
+            f, cx, cy, _ = camdata[1].params
+
+            self.K = np.array([[f, 0, W/2],
+                            [0, f, H/2],
+                            [0,  0,  1]], dtype=np.float32)
+            self.K[0] *= self.img_wh[0]/W
+            self.K[1] *= self.img_wh[1]/H
+
+            # read extrinsics
+            imdata = colmap_utils.read_images_binary(
+                os.path.join(self.raw_root_dir, "colmap_test", '2x/sparse/images.bin'))
+            perm = np.argsort([imdata[k].name for k in imdata])
+            w2c_mats = []
+            bottom = np.array([0, 0, 0, 1.]).reshape(1, 4)
+            for k in imdata:
+                im = imdata[k]
+                R = im.qvec2rotmat()
+                t = im.tvec.reshape(3, 1)
+                w2c_mats += [np.concatenate([np.concatenate([R, t], 1), bottom], 0)]
+            w2c_mats = np.stack(w2c_mats, 0)[perm]
+            w2c_mats = w2c_mats[self.start_frame:self.end_frame] # (N_frames, 4, 4)
+            poses = np.linalg.inv(w2c_mats)[:, :3] # (N_frames, 3, 4)
+
+            # Step 2: correct poses
+            # change "right down front" of COLMAP to "right up back"
+            self.poses = np.concatenate([poses[..., 0:1], -poses[..., 1:3], poses[..., 3:4]], -1)
+            self.poses = colmap_utils.center_poses(
+                self.poses, pose_avg=colmap_utils.average_poses(self.poses_train)
+            )
+
+            # Step 3: correct scale
+            self.scale_factor = self.nearest_depth
+            self.poses[..., 3] /= self.scale_factor
+
+            # create projection matrix, used to compute optical flow
+            bottom = np.zeros((self.N_frames, 1, 4))
+            bottom[..., -1] = 1
+            rt = np.linalg.inv(np.concatenate([self.poses, bottom], 1))[:, :3]
+            rt[:, 1:] *= -1 # "right up back" to "right down forward" for cam projection
+            self.Ps = self.K @ rt
+            self.Ps = torch.FloatTensor(self.Ps).unsqueeze(0) # (1, N_frames, 3, 4)
+            self.Ks = torch.FloatTensor(self.K).unsqueeze(0) # (1, 3, 3)
+            self.image_paths = sorted(glob.glob(
+                os.path.join(self.raw_root_dir, "colmap_test", '2x/sparse/images/2_*.png')
+            ))
+            self.mask_paths = sorted(glob.glob(
+                os.path.join(self.raw_root_dir, "test_mask", '2x/2_*.png')
+            ))
+            paths_train = sorted(glob.glob(
+                os.path.join(self.raw_root_dir, 'rgb/2x/0_*.png')
+            ))[self.start_frame:self.end_frame]
+            frame_ids_train = [
+                os.path.basename(fp).split("_")[-1] for fp in paths_train
+            ]
+            self.ts = [
+                frame_ids_train.index(os.path.basename(fp).split("_")[-1])
+                for fp in self.image_paths
+            ] 
+            print (self.ts)
+
         elif self.split == 'test':
             self.poses_test = self.poses.copy()
             self.image_paths_test = self.image_paths
@@ -262,9 +329,9 @@ class MonocularDataset(Dataset):
                 c2w = torch.FloatTensor(self.poses[self.N_frames//2])
                 t = self.N_frames//2
 
-            elif self.split == 'eval_train':
+            elif self.split == 'eval_train' or self.split == 'eval_test':
                 c2w = torch.FloatTensor(self.poses[idx])
-                t = idx
+                t = self.ts[idx]
                 directions = ray_utils.get_ray_directions(self.img_wh[1], self.img_wh[0], self.K)
                 rays_o, rays_d = ray_utils.get_rays(directions, c2w)
                 shift_near = -min(-1.0, c2w[2, 3])
@@ -276,11 +343,20 @@ class MonocularDataset(Dataset):
                 sample = {'rays': rays, 'ts': rays_t, 'c2w': c2w}
                 
                 sample['cam_ids'] = 0
-                img = Image.open(self.image_paths[t]).convert('RGB')
+                img = Image.open(self.image_paths[idx]).convert('RGB')
                 img = img.resize(self.img_wh, Image.LANCZOS)
                 img = self.transform(img) # (3, h, w)
                 img = img.view(3, -1).T # (h*w, 3)
                 sample['rgbs'] = img
+
+                if self.split == "eval_test":
+                    img = Image.open(self.mask_paths[idx])
+                    img = img.resize(self.img_wh, Image.NEAREST)
+                    img = self.transform(img) # (3, h, w)
+                    img = img.view(3, -1).T # (h*w, 3)
+                    sample['masks'] = img
+
+                sample["image_id"] = os.path.basename(self.image_paths[t])
                 return sample
 
             else:
