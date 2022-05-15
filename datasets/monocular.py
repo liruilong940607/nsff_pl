@@ -261,7 +261,6 @@ class MonocularDataset(Dataset):
                 frame_ids_train.index(os.path.basename(fp).split("_")[-1])
                 for fp in self.image_paths
             ] 
-            print (self.ts)
 
         elif self.split == 'test':
             self.poses_test = self.poses.copy()
@@ -355,8 +354,10 @@ class MonocularDataset(Dataset):
                     img = self.transform(img) # (3, h, w)
                     img = img.view(3, -1).T # (h*w, 3)
                     sample['masks'] = img
-
-                sample["image_id"] = os.path.basename(self.image_paths[t])
+                else:
+                    sample['masks'] = None
+                # TODO(ruilongli): fixing here: t -> idx
+                sample["image_id"] = os.path.basename(self.image_paths[idx])
                 return sample
 
             else:

@@ -24,7 +24,7 @@ CUDA_VISIBLE_DEVICES=4 python eval_nerfbios.py \
 
 
 SUBJECT=teddy-move_0-350-1_aligned_gq95_bk120
-CUDA_VISIBLE_DEVICES=4 python eval_nerfbios.py \
+CUDA_VISIBLE_DEVICES=6 python eval_nerfbios.py \
   --dataset_name monocular --root_dir ./data/${SUBJECT} \
   --img_wh 360 480 --start_end 0 350 \
   --N_samples 128 --N_importance 0  --encode_t \

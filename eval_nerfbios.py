@@ -223,12 +223,10 @@ if __name__ == "__main__":
             img_gt = data['rgbs'].view(h, w, 3)
             img_pred = torch.clip(results['rgb_fine'].view(h, w, 3), 0, 1)
             
-            mask_gt = data.get("masks", None)
-            if mask_gt is not None:
-                mask_gt = mask_gt.view(h, w, 3)[..., 0] > 0.5
-                psnrs.append(metrics.psnr(img_gt[mask_gt], img_pred[mask_gt]).item())
-            else:            
-                psnrs.append(metrics.psnr(img_gt, img_pred).item())
+            mask_gt = data["masks"].view(h, w, 3)[..., 0] > 0.5
+            if args.split == "eval_test":
+                assert mask_gt is not None
+            psnrs.append(metrics.psnr(img_gt, img_pred, mask_gt).item())
             # vis
             imageio.imwrite(
                 os.path.join(
