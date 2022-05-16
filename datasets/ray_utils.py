@@ -1,10 +1,10 @@
+import numpy as np
 import torch
 from einops import rearrange
-import numpy as np
 from kornia import create_meshgrid
 
 
-def get_ray_directions(H, W, K, D=None, return_uv=False, flatten=True):
+def get_ray_directions(H, W, K, D=None, return_uv=False, flatten=True, grid=None):
     """
     Get ray directions for all pixels in camera coordinate.
     Reference: https://www.scratchapixel.com/lessons/3d-basic-rendering/
@@ -20,7 +20,8 @@ def get_ray_directions(H, W, K, D=None, return_uv=False, flatten=True):
         directions: (H, W, 3) or (H*W, 3), the direction of the rays in camera coordinate
         uv: (H, W, 2) or (H*W, 2) image coordinates
     """
-    grid = create_meshgrid(H, W, normalized_coordinates=False)[0] # (H, W, 2)
+    if grid is None:
+        grid = create_meshgrid(H, W, normalized_coordinates=False)[0] # (H, W, 2)
     i, j = grid.unbind(-1)
 
     # without +0.5 pixel centering

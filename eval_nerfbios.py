@@ -2,18 +2,20 @@ import copy
 import os
 from argparse import ArgumentParser
 from collections import defaultdict
+from unittest import result
 
 import cv2
 import imageio
 import numpy as np
 import torch
+import torch.nn.functional as F
 from tqdm import tqdm
 
 import metrics
 import third_party.lpips.lpips.lpips as lpips
-from datasets import dataset_dict
+from datasets import dataset_dict, ray_utils
 from models.nerf import NeRF, PosEmbedding
-from models.rendering import interpolate, render_rays
+from models.rendering import interpolate, render_flow, render_rays
 from utils import load_ckpt, visualize_depth
 
 torch.backends.cudnn.benchmark = True
@@ -111,6 +113,39 @@ def f(models, embeddings,
     return results
 
 
+@torch.no_grad()
+def f_flow(models, embeddings,
+      rays, ts, max_t, N_samples, N_importance,
+      chunk, xyz_fine=None,
+      **kwargs):
+    """Do batched inference on rays using chunk."""
+    B = rays.shape[0]
+    results = defaultdict(list)
+    kwargs_ = copy.deepcopy(kwargs)
+    for i in range(0, B, chunk):
+        if 'view_dir' in kwargs:
+            kwargs_['view_dir'] = kwargs['view_dir'][i:i+chunk]
+        rendered_ray_chunks = \
+            render_flow(models,
+                        embeddings,
+                        rays[i:i+chunk],
+                        None if ts is None else ts[i:i+chunk],
+                        max_t,
+                        N_samples,
+                        0,
+                        0,
+                        N_importance,
+                        chunk,
+                        test_time=True,
+                        xyz_fine=xyz_fine,
+                        **kwargs_)
+        for k, v in rendered_ray_chunks.items():
+            results[k] += [v.cpu()]
+    for k, v in results.items():
+        results[k] = torch.cat(v, 0)
+    return results
+
+
 def save_depth(depth, h, w, dir_name, filename):
     depth_pred = np.nan_to_num(depth.view(h, w).numpy())
     depth_pred_img = visualize_depth(torch.from_numpy(depth_pred)).permute(1, 2, 0).numpy()
@@ -132,10 +167,18 @@ if __name__ == "__main__":
             'img_wh': (w, h),
             'start_end': tuple(args.start_end)
         }
-    if args.split in ["eval_train", "eval_test"]:
+    elif args.split in ["eval_train", "eval_test"]:
         kwargs = {
             'root_dir': args.root_dir,
             'split': args.split,
+            'img_wh': (w, h),
+            'start_end': tuple(args.start_end),
+            'raw_root_dir': args.root_dir_raw,
+        }
+    elif args.split == "eval_kps":
+        kwargs = {
+            'root_dir': args.root_dir,
+            'split': "eval_kps",
             'img_wh': (w, h),
             'start_end': tuple(args.start_end),
             'raw_root_dir': args.root_dir_raw,
@@ -149,7 +192,11 @@ if __name__ == "__main__":
 
     kwargs = {'K': dataset.K, 'dataset': dataset}
     kwargs['output_transient'] = args.output_transient
-    kwargs['output_transient_flow'] = []
+
+    if args.split == "eval_kps":
+        kwargs['output_transient_flow'] = ['fw', 'bw', 'disocc']
+    else:
+        kwargs['output_transient_flow'] = []
 
     embeddings = {'xyz': PosEmbedding(9, 10), 'dir': PosEmbedding(3, 4)}
 
@@ -207,6 +254,71 @@ if __name__ == "__main__":
             os.path.join(dir_name, f'{args.scene_name}.jpg'),
             imgs
         )
+
+    elif args.split == "eval_kps":
+        from utils.nerfbios import compute_pcks_per_ratio, get_kp_xv_ids
+        idxs_xv = get_kp_xv_ids(data_dir=args.root_dir_raw, num_xv_steps=10)
+        data_xv = [dataset[idx] for idx in idxs_xv]
+        save_dir = os.path.join(dir_name, f'{args.split}')
+        os.makedirs(save_dir, exist_ok=True)
+
+        pred_keypoints = []
+        gt_keypoints = []
+        for data_src in tqdm(data_xv):
+            keypoints_src = data_src["keypoints"].clone()
+            for data_tgt in data_xv:
+                keypoints_tgt = data_tgt["keypoints"].clone()
+                results = f_flow(
+                    models, embeddings, 
+                    data_src["rays"].to(device), data_src["ts"].to(device),
+                    dataset.N_frames-1, args.N_samples, args.N_importance,
+                    args.chunk, **kwargs
+                )
+                weights = results["weights_fine"].clone()  # [J, 128]
+                xyzs = results["xyzs_fine"].clone()  # [J, 128, 3]
+                
+                delta_t = data_tgt['t'] - data_src['t']
+                # if delta_t == 0:
+                #     continue
+                flow = "fw" if delta_t > 0 else "bw"
+        
+                for i in range(abs(delta_t)):
+                    xyzs = results["xyzs_%s" % flow]
+                    ts = data_src["ts"] + (i + 1) * (-1 if delta_t < 0 else 1)
+                    results = f_flow(
+                        models, embeddings, 
+                        data_src["rays"].to(device), ts.to(device),
+                        dataset.N_frames-1, args.N_samples, args.N_importance,
+                        args.chunk, xyz_fine=xyzs.to(device), **kwargs
+                    )
+                # Integrate.
+                exp_warped_points_ndc = (weights[..., None] * xyzs).sum(dim=-2)
+                # Warp
+                K = torch.tensor(dataset.K)
+                exp_warped_points = ray_utils.ndc2world(exp_warped_points_ndc, K)
+                Ps = dataset.Ps[0, data_tgt['ts']] # (N_rays, 3, 4)
+                uvd = Ps[:, :3, :3] @ exp_warped_points.unsqueeze(-1) + Ps[:, :3, 3:]
+                warped_kps = uvd[:, :2, 0] / (torch.abs(uvd[:, 2:, 0])+1e-8)
+                warped_kps = torch.cat([warped_kps, keypoints_src[..., -1:]], dim=-1)
+
+                # common kpts
+                selector = (keypoints_src[..., -1] != 0) & (keypoints_tgt[..., -1] != 0)
+                # if selector.sum() == 0:
+                #     continue
+                warped_kps[~selector] = 0
+                keypoints_tgt[~selector] = 0
+                
+                pred_keypoints.append(warped_kps.cpu().numpy())
+                gt_keypoints.append(keypoints_tgt.cpu().numpy())
+
+        pred_keypoints = np.stack(pred_keypoints)
+        gt_keypoints = np.stack(gt_keypoints)
+        
+        pck_ratios = np.linspace(0.1, 0.01, 10)
+        pcks_per_ratio = compute_pcks_per_ratio(
+            gt_keypoints, pred_keypoints, dataset.img_wh, pck_ratios
+        )
+        np.savetxt(os.path.join(save_dir, 'pcks.txt'), pcks_per_ratio)
 
     elif args.split in ["eval_train", "eval_test"]:
         os.makedirs(os.path.join(dir_name, f'{args.split}'), exist_ok=True)

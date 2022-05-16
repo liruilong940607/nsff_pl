@@ -5,6 +5,7 @@ from collections import defaultdict
 import cv2
 import numpy as np
 import torch
+from genericpath import exists
 from PIL import Image
 from scipy.stats import linregress
 from torch.utils.data import Dataset
@@ -194,6 +195,23 @@ class MonocularDataset(Dataset):
                 self.weights = [np.ones(self.img_wh[0]*self.img_wh[1])
                                 for _ in range(self.N_frames)]
         
+
+        elif self.split == "eval_kps":
+            self.poses = self.poses
+            self.image_paths = self.image_paths
+            self.keypoints_files = [
+                (
+                    os.path.join(self.raw_root_dir, "keypoints", "2x", "%s.npy") 
+                    %
+                    os.path.basename(fp).split(".")[0]
+                )
+                for fp in self.image_paths
+            ]
+            self.keypoints = [
+                np.load(fp) if os.path.exists(fp) else None
+                for fp in self.keypoints_files
+            ]
+
         elif self.split == 'eval_train':
             self.poses = self.poses
             self.image_paths = self.image_paths
@@ -323,6 +341,30 @@ class MonocularDataset(Dataset):
                       'uv_fw': rays[:, 12:14],
                       'uv_bw': rays[:, 14:16]}
             if self.hard_sampling: sample['rand_idx'] = torch.LongTensor(rand_idx)
+        
+        elif self.split == "eval_kps":
+            t = idx
+            c2w = torch.FloatTensor(self.poses[idx])
+            print (idx, self.keypoints_files[idx])
+            keypoints = torch.FloatTensor(self.keypoints[idx])
+            assert keypoints is not None
+
+            directions = ray_utils.get_ray_directions(
+                self.img_wh[1], self.img_wh[0], self.K, grid=keypoints[..., :2])
+            rays_o, rays_d = ray_utils.get_rays(directions, c2w)
+            shift_near = -min(-1.0, c2w[2, 3])
+            rays_o, rays_d = ray_utils.get_ndc_rays(self.K, 1.0, 
+                                                    shift_near, rays_o, rays_d)
+
+            rays_t = t * torch.ones(len(rays_o), dtype=torch.long) # (h*w)
+
+            rays = torch.cat([rays_o, rays_d], 1) # (h*w, 6)
+
+            sample = {
+                'rays': rays, 'ts': rays_t, 'c2w': c2w, 'keypoints': keypoints,
+                't': t, 'cam_ids': 0,
+            }
+
         else:
             if self.split == 'val':
                 c2w = torch.FloatTensor(self.poses[self.N_frames//2])

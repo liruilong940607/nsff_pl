@@ -9,6 +9,27 @@ import numpy as np
 LOGGER = logging.getLogger(__name__)
 
 
+def compute_pcks_per_ratio(kps, pred_kps, img_wh, ratios):
+    # kps, pred_kps: (N, J, 3)
+    valid_mask = kps[..., -1:] != 0
+    kps = kps[..., :2][valid_mask.repeat(2, axis=-1)].reshape(-1, 2)
+    pred_kps = pred_kps[..., :2][valid_mask.repeat(2, axis=-1)].reshape(-1, 2)
+
+    dists = np.linalg.norm(kps - pred_kps, axis=-1)
+    threshes = np.array(ratios) * max(img_wh)
+    stats = dists[:, None] < threshes[None, :]
+
+    pcks = stats.sum(0) / stats.shape[0]
+    return np.stack([pcks, ratios], axis=-1)
+    
+    
+def get_kp_xv_ids(data_dir: str, num_xv_steps: int = 10):
+    train_ids, val_ids, is_multiview = _load_dataset_ids(data_dir)
+    train_ids_xv = _strided_subset(train_ids, num_xv_steps, clip_ok=True)
+    idxs_xv = [train_ids.index(id) for id in train_ids_xv]
+    return idxs_xv
+
+
 def get_xv_ids(data_dir: str, num_xv_steps: int = 4):
     train_ids, val_ids, is_multiview = _load_dataset_ids(data_dir)
     train_ids_xv = _strided_subset(train_ids, num_xv_steps, clip_ok=True)

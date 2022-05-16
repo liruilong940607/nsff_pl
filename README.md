@@ -224,13 +224,14 @@ Now you can start training!
 
 Run the following command (modify the parameters according to `opt.py`):
 ```j
-python train.py \
+CUDA_VISIBLE_DEVICES=6 python train.py \
   --dataset_name monocular --root_dir ./data/hang-dance-0_120-550-1_aligned_gq95_bk120 \
   --img_wh 360 480 --start_end 0 429 \
   --N_samples 128 --N_importance 0 --encode_t \
   --num_epochs 50 --batch_size 512 \
   --optimizer adam --lr 5e-4 --lr_scheduler cosine \
-  --exp_name hang-dance-0_120-550-1_aligned_gq95_bk120
+  --exp_name hang-dance-0_120-550-1_aligned_gq95_bk120 \
+  --ckpt_path ckpts/hang-dance-0_120-550-1_aligned_gq95_bk120/epoch=38.ckpt
 
 python train.py \
   --dataset_name monocular --root_dir ./data/mochi-high-five_0-180-1_aligned_gq90_bk10 \
@@ -317,3 +318,19 @@ More specifically, the `split` argument specifies which novel view to generate:
 # Acknowledgment
 
 Thank to the authors of the NSFF paper, [owang](https://github.com/owang) [zhengqili](https://github.com/zhengqili) [sniklaus](https://github.com/sniklaus), for fruitful discussions and supports!
+
+
+```
+
+SUBJECT=hang-dance-1_0-250-1_aligned_gq95_bk120
+CUDA_VISIBLE_DEVICES=7 python eval_nerfbios.py \
+  --dataset_name monocular --root_dir ./data/${SUBJECT} \
+  --img_wh 360 480 --start_end 0 250 \
+  --N_samples 128 --N_importance 0  --encode_t \
+  --output_transient \
+  --split eval_kps \
+  --ckpt_path ckpts/${SUBJECT}/epoch=29.ckpt \
+  --scene_name ${SUBJECT} \
+  --root_dir_raw /home/ruilongli/workspace/nerfbios/datasets/iphone-captures_v3/${SUBJECT}
+
+```

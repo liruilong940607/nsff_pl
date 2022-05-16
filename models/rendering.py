@@ -1,9 +1,10 @@
 import torch
-from einops import rearrange, reduce, repeat
 from datasets import ray_utils
+from einops import rearrange, reduce, repeat
 
 # for frame interpolation
 from kornia import create_meshgrid
+
 from .softsplat import FunctionSoftsplat
 
 
@@ -229,7 +230,7 @@ def render_rays(models,
                     render_transient_warping(xyz_bw_, tm1_embedded_, 'fw')
                 # to compute fw-bw consistency
                 results['xyzs_fw_bw'] = xyz_fw + transient_flows_fw_bw
-                results['xyzs_bw_fw'] = xyz_bw + transient_flows_fw_bw
+                results['xyzs_bw_fw'] = xyz_bw + transient_flows_bw_fw  # NOTE: fixed by ruilongli
 
         alphas_sh = torch.cat([torch.ones_like(alphas[:, :1]), 1-alphas], -1)
         transmittance = torch.cumprod(alphas_sh[:, :-1], -1)
@@ -360,6 +361,215 @@ def render_rays(models,
     inference(results, model, xyz_fine, zs, test_time, **kwargs)
 
     return results
+
+
+def render_flow(models,
+                embeddings,
+                rays,
+                ts,
+                max_t,
+                N_samples=64,
+                perturb=0,
+                noise_std=0,
+                N_importance=0,
+                chunk=1024*32,
+                test_time=False,
+                xyz_fine=None,
+                **kwargs):
+    """
+    Render rays by computing the output of @model applied on @rays
+    Inputs:
+        models: list of NeRF models (coarse and fine) defined in nerf.py
+        embeddings: list of embedding models of origin and direction defined in nerf.py
+        rays: (N_rays, 3+3), ray origins and directions
+        ts: (N_rays) or None, ray time (None if not output_transient)
+        max_t: int, max ray time (self.N_frames-1 in datasets/lightfield.py)
+        N_samples: number of coarse samples per ray
+        perturb: factor to perturb the sampling position on the ray (for coarse model only)
+        noise_std: factor to perturb the model's prediction of sigma
+        N_importance: number of fine samples per ray
+        chunk: the chunk size in batched inference
+        test_time: whether it is test (inference only) or not. If True, it will not do inference
+                   on coarse rgb to save time
+    Outputs:
+        result: dictionary containing final rgb and depth maps for coarse and fine models
+    """
+
+    def inference(results, model, xyz, zs, test_time=False, **kwargs):
+        """
+        Helper function that performs model inference.
+        Inputs:
+            results: a dict storing all results
+            model: NeRF model (coarse or fine)
+            xyz: (N_rays, N_samples_, 3) sampled positions
+                  N_samples_ is the number of sampled points in each ray;
+                             = N_samples for coarse model
+                             = N_samples+N_importance for fine model
+                             +1 if add new objects in kwargs
+            zs: (N_rays, N_samples_) depths of the sampled positions
+            test_time: test time or not
+        """
+
+        typ = model.typ
+        results[f'zs_{typ}'] = zs
+        results[f'xyzs_{typ}'] = xyz
+        N_samples_ = xyz.shape[1]
+        xyz_ = rearrange(xyz, 'n1 n2 c -> (n1 n2) c', c=3)
+
+        # Perform model inference to get rgb and raw sigma
+        B = xyz_.shape[0]
+        out_chunks = []
+        if typ=='coarse' and test_time:
+            if output_transient:
+                t_embedded_ = repeat(t_embedded, 'n1 c -> (n1 n2) c', n2=N_samples_)
+            for i in range(0, B, chunk):
+                inputs = [embedding_xyz(xyz_[i:i+chunk])]
+                if output_transient: inputs += [t_embedded_[i:i+chunk]]
+                out_chunks += [model(torch.cat(inputs, 1), sigma_only=True,
+                                     output_transient=output_transient)]
+            out = torch.cat(out_chunks, 0)
+            out = rearrange(out, '(n1 n2) c -> n1 n2 c', n1=N_rays, n2=N_samples_)
+            static_sigmas = out[..., 0]
+            if output_transient: transient_sigmas = out[..., 1]
+        else:
+            dir_embedded_ = repeat(dir_embedded, 'n1 c -> (n1 n2) c', n2=N_samples_)
+            if model.encode_appearance:
+                a_embedded_ = repeat(a_embedded, 'n1 c -> (n1 n2) c', n2=N_samples_)
+            if output_transient:
+                t_embedded_ = repeat(t_embedded, 'n1 c -> (n1 n2) c', n2=N_samples_)
+            for i in range(0, B, chunk):
+                inputs = [embedding_xyz(xyz_[i:i+chunk]), dir_embedded_[i:i+chunk]]
+                if model.encode_appearance: inputs += [a_embedded_[i:i+chunk]]
+                if output_transient: inputs += [t_embedded_[i:i+chunk]]
+                out_chunks += [model(torch.cat(inputs, 1),
+                                     output_transient=output_transient,
+                                     output_transient_flow=output_transient_flow)]
+
+            out = torch.cat(out_chunks, 0)
+            out = rearrange(out, '(n1 n2) c -> n1 n2 c', n1=N_rays, n2=N_samples_)
+            results[f'static_rgbs_{typ}'] = static_rgbs = out[..., :3]
+            static_sigmas = out[..., 3]
+            if output_transient:
+                results[f'transient_rgbs_{typ}'] = transient_rgbs = out[..., 4:7]
+                transient_sigmas = out[..., 7]
+                if output_transient_flow: # only [] or ['fw', 'bw'] or ['fw', 'bw', 'disocc'] !
+                    results['transient_flows_fw'] = transient_flows_fw = out[..., 8:11]
+                    results['transient_flows_bw'] = transient_flows_bw = out[..., 11:14]
+                    transient_flows_fw[zs>z_far] = 0
+                    transient_flows_bw[zs>z_far] = 0
+
+        # set invisible transient_sigmas to a very negative value
+        if test_time and output_transient and 'dataset' in kwargs:
+            dataset = kwargs['dataset']
+            K = dataset.Ks[0].to(xyz.device)
+            visibilities = torch.zeros(len(xyz_), device=xyz.device)
+            xyz_w = ray_utils.ndc2world(xyz_, K)
+            for i in range(len(dataset.cam_train)):
+                ray_utils.compute_world_visiblility(visibilities,
+                    xyz_w, K, dataset.img_wh[1], dataset.img_wh[0],
+                    torch.FloatTensor(dataset.poses[i*dataset.N_frames+ts[0]]).to(xyz.device))
+            transient_sigmas[visibilities.view_as(transient_sigmas)==0] = -10
+
+        deltas = zs[:, 1:] - zs[:, :-1] # (N_rays, N_samples_-1)
+        static_deltas = torch.cat([deltas, 100*torch.ones_like(deltas[:, :1])], -1)
+        transient_deltas = torch.cat([deltas, 1e-3*torch.ones_like(deltas[:, :1])], -1)
+
+        static_sigmas = \
+            act(static_sigmas+torch.randn_like(static_sigmas)*noise_std)
+        alphas = 1-torch.exp(-static_deltas*static_sigmas)
+
+        if output_transient:
+            static_alphas = alphas
+            transient_sigmas = \
+                act(transient_sigmas+torch.randn_like(transient_sigmas)*noise_std)
+            transient_alphas = 1-torch.exp(-transient_deltas*transient_sigmas)
+            alphas = 1-(1-static_alphas)*(1-transient_alphas)
+
+            if output_transient_flow: # render with flowed-xyzs
+                results['xyzs_fw'] = xyz + transient_flows_fw
+                results['xyzs_bw'] = xyz + transient_flows_bw
+
+        alphas_sh = torch.cat([torch.ones_like(alphas[:, :1]), 1-alphas], -1)
+        transmittance = torch.cumprod(alphas_sh[:, :-1], -1)
+
+        if output_transient:
+            static_weights = static_alphas * transmittance
+            transient_weights = transient_alphas * transmittance
+
+        weights = alphas * transmittance # (N_rays, N_samples_)
+
+        if output_transient:
+            results[f'static_weights_{typ}'] = static_weights
+            results[f'transient_weights_{typ}'] = transient_weights
+            results[f'weights_{typ}'] = weights
+        else: 
+            results[f'static_weights_{typ}'] = weights
+
+        return
+
+
+    results = {}
+    N_rays = rays.shape[0]
+    act = torch.nn.Softplus() # sigma activation function
+    rays_o, rays_d = rays[:, 0:3], rays[:, 3:6] # both (N_rays, 3)
+    embedding_xyz, embedding_dir = embeddings['xyz'], embeddings['dir']
+    dir_embedded = embedding_dir(kwargs.get('view_dir', rays_d))
+
+    rays_o = rearrange(rays_o, 'n1 c -> n1 1 c')
+    rays_d = rearrange(rays_d, 'n1 c -> n1 1 c')
+
+    # coarse sample depths (same for static and transient)
+    zs = torch.linspace(0, 1, N_samples, device=rays.device).expand(N_rays, N_samples)
+    zs_mid = 0.5 * (zs[: ,:-1]+zs[: ,1:]) # (N_rays, N_samples-1) interval mid points
+    z_far = 0.95 # explicitly zero the flow if z exceeds this value
+    
+    if perturb > 0: # perturb sample depths
+        # get intervals between samples
+        upper = torch.cat([zs_mid, zs[: ,-1:]], -1)
+        lower = torch.cat([zs[: ,:1], zs_mid], -1)
+        
+        perturb_rand = perturb * torch.rand_like(zs)
+        zs = lower + (upper - lower) * perturb_rand
+
+    if N_importance > 0: # coarse to fine
+        model = models['coarse']
+        output_transient = kwargs.get('output_transient', True) and model.encode_transient
+        output_transient_flow = [] # no flow for coarse model
+        if output_transient:
+            t_embedded = kwargs['t_embedded'] if 't_embedded' in kwargs else embeddings['t'](ts)
+        xyz_coarse = rays_o + rays_d * rearrange(zs, 'n1 n2 -> n1 n2 1')
+        inference(results, model, xyz_coarse, zs, test_time, **kwargs)
+
+        zs_static = \
+            sample_pdf(zs_mid, results['static_weights_coarse'][:, 1:-1].detach(),
+                       N_importance, det=perturb==0)
+        zs_list = [zs, zs_static]
+        if test_time: results['static_zs_fine'] = zs_static
+
+        if output_transient:
+            zs_transient = \
+                sample_pdf(zs_mid, results['transient_weights_coarse'][:, 1:-1].detach(),
+                            N_importance, det=perturb==0)
+            zs_list += [zs_transient]
+            if test_time: results['transient_zs_fine'] = zs_transient
+
+        zs = torch.sort(torch.cat(zs_list, -1), -1)[0]
+
+    model = models['fine']
+    if model.encode_appearance:
+        a_embedded = kwargs['a_embedded'] if 'a_embedded' in kwargs else embeddings['a'](ts)
+    if N_importance == 0:
+        output_transient = kwargs.get('output_transient', True) and model.encode_transient
+        if output_transient:
+            t_embedded = kwargs['t_embedded'] if 't_embedded' in kwargs else embeddings['t'](ts)
+    output_transient_flow = \
+        [] if not output_transient else kwargs.get('output_transient_flow', [])
+    if xyz_fine is None:
+        xyz_fine = rays_o + rays_d * rearrange(zs, 'n1 n2 -> n1 n2 1')
+    inference(results, model, xyz_fine, zs, test_time, **kwargs)
+
+    return results
+
 
 
 def interpolate(results_t, results_tp1, dt, K, c2w, img_wh):

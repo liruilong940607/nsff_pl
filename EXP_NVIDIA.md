@@ -203,6 +203,14 @@ CUDA_VISIBLE_DEVICES=2 python train.py \
   --num_epochs 200 --batch_size 512 \
   --optimizer adam --lr 5e-4 --lr_scheduler cosine \
   --exp_name chair-rotate_66-180-1_aligned_gq95_bk120
+
+CUDA_VISIBLE_DEVICES=7 python train.py \
+  --dataset_name monocular --root_dir ./data/mochi-high-five_0-180-1_aligned_gq90_bk10 \
+  --img_wh 360 480 --start_end 0 180 \
+  --N_samples 128 --N_importance 0 --encode_t \
+  --num_epochs 200 --batch_size 512 \
+  --optimizer adam --lr 5e-4 --lr_scheduler cosine \
+  --exp_name mochi-high-five_0-180-1_aligned_gq90_bk10
 ```
 
 ```
