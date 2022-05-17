@@ -256,7 +256,7 @@ class MonocularDataset(Dataset):
             self.poses[..., 3] /= self.scale_factor
 
             # create projection matrix, used to compute optical flow
-            bottom = np.zeros((self.N_frames, 1, 4))
+            bottom = np.zeros((len(poses), 1, 4))
             bottom[..., -1] = 1
             rt = np.linalg.inv(np.concatenate([self.poses, bottom], 1))[:, :3]
             rt[:, 1:] *= -1 # "right up back" to "right down forward" for cam projection

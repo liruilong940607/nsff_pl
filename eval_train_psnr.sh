@@ -14,7 +14,7 @@ CUDA_VISIBLE_DEVICES=4 python eval_nerfbios.py \
 SUBJECT=haru-sit_400-600-1_aligned_gq90_bk10
 CUDA_VISIBLE_DEVICES=4 python eval_nerfbios.py \
   --dataset_name monocular --root_dir ./data/${SUBJECT} \
-  --img_wh 360 480 --start_end 0 200 \
+  --img_wh 480 360 --start_end 0 200 \
   --N_samples 128 --N_importance 0  --encode_t \
   --output_transient \
   --split eval_train \
