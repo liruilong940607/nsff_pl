@@ -201,11 +201,11 @@ if __name__ == "__main__":
     embeddings = {'xyz': PosEmbedding(9, 10), 'dir': PosEmbedding(3, 4)}
 
     if args.encode_a:
-        embedding_a = torch.nn.Embedding(dataset.N_frames, args.N_a).to(device)
+        embedding_a = torch.nn.Embedding(dataset.N_frames_train, args.N_a).to(device)
         embeddings['a'] = embedding_a
         load_ckpt(embedding_a, args.ckpt_path, 'embedding_a')
     if args.encode_t:
-        embedding_t = torch.nn.Embedding(dataset.N_frames, args.N_tau).to(device)
+        embedding_t = torch.nn.Embedding(dataset.N_frames_train, args.N_tau).to(device)
         embeddings['t'] = embedding_t
         load_ckpt(embedding_t, args.ckpt_path, 'embedding_t')
 
@@ -241,7 +241,7 @@ if __name__ == "__main__":
                 results = f(
                     models, embeddings, 
                     data_view["rays"].to(device), data_ts["ts"].to(device),
-                    dataset.N_frames-1, args.N_samples, args.N_importance,
+                    dataset.N_frames_train-1, args.N_samples, args.N_importance,
                     args.chunk, **kwargs
                 )
                 # one image
@@ -271,7 +271,7 @@ if __name__ == "__main__":
                 results = f_flow(
                     models, embeddings, 
                     data_src["rays"].to(device), data_src["ts"].to(device),
-                    dataset.N_frames-1, args.N_samples, args.N_importance,
+                    dataset.N_frames_train-1, args.N_samples, args.N_importance,
                     args.chunk, **kwargs
                 )
                 weights = results["weights_fine"].clone()  # [J, 128]
@@ -288,7 +288,7 @@ if __name__ == "__main__":
                     results = f_flow(
                         models, embeddings, 
                         data_src["rays"].to(device), ts.to(device),
-                        dataset.N_frames-1, args.N_samples, args.N_importance,
+                        dataset.N_frames_train-1, args.N_samples, args.N_importance,
                         args.chunk, xyz_fine=xyzs.to(device), **kwargs
                     )
                 # Integrate.
@@ -328,7 +328,7 @@ if __name__ == "__main__":
                 results = f(
                     models, embeddings, 
                     data["rays"].to(device), data["ts"].to(device),
-                    dataset.N_frames-1, args.N_samples, args.N_importance,
+                    dataset.N_frames_train-1, args.N_samples, args.N_importance,
                     args.chunk, **kwargs
                 )
             # one image

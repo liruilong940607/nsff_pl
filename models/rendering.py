@@ -197,7 +197,7 @@ def render_rays(models,
             for i in range(len(dataset.cam_train)):
                 ray_utils.compute_world_visiblility(visibilities,
                     xyz_w, K, dataset.img_wh[1], dataset.img_wh[0],
-                    torch.FloatTensor(dataset.poses[i*dataset.N_frames+ts[0]]).to(xyz.device))
+                    torch.FloatTensor(dataset.poses_train_ready[i+ts[0]]).to(xyz.device))
             transient_sigmas[visibilities.view_as(transient_sigmas)==0] = -10
 
         deltas = zs[:, 1:] - zs[:, :-1] # (N_rays, N_samples_-1)

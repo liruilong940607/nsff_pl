@@ -53,7 +53,7 @@ class MonocularDataset(Dataset):
             sorted(glob.glob(os.path.join(self.root_dir, 'flow_fw/*.flo')))[self.start_frame:self.end_frame] + ['dummy']
         self.flow_bw_paths = \
             ['dummy'] + sorted(glob.glob(os.path.join(self.root_dir, 'flow_bw/*.flo')))[self.start_frame:self.end_frame]
-        self.N_frames = len(self.image_paths)
+        self.N_frames = self.N_frames_train = len(self.image_paths)
 
         camdata = colmap_utils.read_cameras_binary(os.path.join(self.root_dir,
                                                                 'sparse/0/cameras.bin'))
@@ -131,6 +131,7 @@ class MonocularDataset(Dataset):
         # Step 3: correct scale
         self.scale_factor = self.nearest_depth
         self.poses[..., 3] /= self.scale_factor
+        self.poses_train_ready = self.poses.copy()
 
         # create projection matrix, used to compute optical flow
         bottom = np.zeros((self.N_frames, 1, 4))
@@ -243,6 +244,7 @@ class MonocularDataset(Dataset):
             w2c_mats = np.stack(w2c_mats, 0)[perm]
             w2c_mats = w2c_mats[self.start_frame:self.end_frame] # (N_frames, 4, 4)
             poses = np.linalg.inv(w2c_mats)[:, :3] # (N_frames, 3, 4)
+            self.N_frames = len(poses)
 
             # Step 2: correct poses
             # change "right down front" of COLMAP to "right up back"
@@ -254,6 +256,7 @@ class MonocularDataset(Dataset):
             # Step 3: correct scale
             self.scale_factor = self.nearest_depth
             self.poses[..., 3] /= self.scale_factor
+            self.poses_test = self.poses.copy()
 
             # create projection matrix, used to compute optical flow
             bottom = np.zeros((len(poses), 1, 4))
