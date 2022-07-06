@@ -17,6 +17,7 @@ from datasets import dataset_dict, ray_utils
 from models.nerf import NeRF, PosEmbedding
 from models.rendering import interpolate, render_flow, render_rays
 from utils import load_ckpt, visualize_depth
+from utils.nerfbios import visualize_kps
 
 torch.backends.cudnn.benchmark = True
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -167,7 +168,7 @@ if __name__ == "__main__":
             'img_wh': (w, h),
             'start_end': tuple(args.start_end)
         }
-    elif args.split in ["eval_train", "eval_test"]:
+    elif args.split in ["eval_train", "eval_test", "eval_rendering"]:
         kwargs = {
             'root_dir': args.root_dir,
             'split': args.split,
@@ -260,13 +261,29 @@ if __name__ == "__main__":
         idxs_xv = get_kp_xv_ids(data_dir=args.root_dir_raw, num_xv_steps=10)
         data_xv = [dataset[idx] for idx in idxs_xv]
         save_dir = os.path.join(dir_name, f'{args.split}')
-        os.makedirs(save_dir, exist_ok=True)
+        os.makedirs(os.path.join(save_dir, 'images'), exist_ok=True)
+
+        img_preds = []
+        for data in tqdm(data_xv):
+            with torch.no_grad():
+                results = f(
+                    models, embeddings, 
+                    data["rays_img"].to(device), data["ts_img"].to(device),
+                    dataset.N_frames_train-1, args.N_samples, args.N_importance,
+                    args.chunk, **kwargs
+                )
+            img_pred = torch.clip(results['rgb_fine'].view(h, w, 3), 0, 1)
+            img_preds.append(np.uint8(img_pred.cpu().numpy() * 255.0))
 
         pred_keypoints = []
         gt_keypoints = []
-        for data_src in tqdm(data_xv):
-            keypoints_src = data_src["keypoints"].clone()
-            for data_tgt in data_xv:
+        for i_src, data_src in tqdm(enumerate(data_xv)):
+            id_src = int(data_src["image_id"][:-4].split("_")[1])
+            for i_tgt, data_tgt in enumerate(data_xv):
+                if (i_src, i_tgt) not in [(1, 3), (4, 6), (7, 9)]:
+                    continue
+                id_tgt = int(data_tgt["image_id"][:-4].split("_")[1])
+                keypoints_src = data_src["keypoints"].clone()
                 keypoints_tgt = data_tgt["keypoints"].clone()
                 results = f_flow(
                     models, embeddings, 
@@ -306,11 +323,43 @@ if __name__ == "__main__":
                 # if selector.sum() == 0:
                 #     continue
                 warped_kps[~selector] = 0
+                keypoints_src[~selector] = 0
                 keypoints_tgt[~selector] = 0
-                
-                pred_keypoints.append(warped_kps.cpu().numpy())
-                gt_keypoints.append(keypoints_tgt.cpu().numpy())
 
+                warped_kps = warped_kps.cpu().numpy()
+                keypoints_src = keypoints_src.cpu().numpy()
+                keypoints_tgt = keypoints_tgt.cpu().numpy()
+
+                pred_keypoints.append(keypoints_src)
+                gt_keypoints.append(keypoints_tgt)
+
+                if (
+                    "mochi" in args.root_dir or
+                    "hang" in args.root_dir or
+                    "haru" in args.root_dir or
+                    "sriracha" in args.root_dir
+                ):
+                    kp_xv_skel = "stanfordx"
+                    image_scale = 2
+                else:
+                    kp_xv_skel = None
+                    image_scale = 1
+                warped_visual = visualize_kps(
+                    kps=warped_kps,
+                    image=img_preds[i_tgt].copy(),
+                    skel=kp_xv_skel,
+                    kp_radius=max(1, 4 * 2 // image_scale),
+                    bone_thickness=max(1, 3 * 2 // image_scale)
+                )
+                imageio.imwrite(
+                    os.path.join(
+                        save_dir, 
+                        'images',
+                        '%dxvfrom%d.png' % (id_tgt, id_src)
+                    ),
+                    warped_visual
+                )
+                
         pred_keypoints = np.stack(pred_keypoints)
         gt_keypoints = np.stack(gt_keypoints)
         
@@ -352,6 +401,28 @@ if __name__ == "__main__":
         with open(os.path.join(dir_name, f'{args.split}', 'psnr.txt'), 'w') as fp:
             fp.write("psnr: %.3f" % psnrs)                    
 
+    elif args.split == "eval_rendering":
+        os.makedirs(os.path.join(dir_name, f'{args.split}'), exist_ok=True)
+        for id, data in tqdm(enumerate(dataset)):
+            with torch.no_grad():
+                results = f(
+                    models, embeddings, 
+                    data["rays"].to(device), data["ts"].to(device),
+                    dataset.N_frames_train-1, args.N_samples, args.N_importance,
+                    args.chunk, **kwargs
+                )
+            # one image
+            img_gt = data['rgbs'].view(h, w, 3)
+            img_pred = torch.clip(results['rgb_fine'].view(h, w, 3), 0, 1)
+            # vis
+            imageio.imwrite(
+                os.path.join(
+                    dir_name, 
+                    f'{args.split}', 
+                    '%s' % data["image_id"]
+                ),
+                (torch.hstack([img_pred, img_gt]).numpy()*255).astype(np.uint8)
+            )
     else:
         raise NotImplementedError
         

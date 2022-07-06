@@ -188,17 +188,17 @@ def render_rays(models,
                     transient_flows_fw[zs>z_far] = 0
                     transient_flows_bw[zs>z_far] = 0
 
-        # set invisible transient_sigmas to a very negative value
-        if test_time and output_transient and 'dataset' in kwargs:
-            dataset = kwargs['dataset']
-            K = dataset.Ks[0].to(xyz.device)
-            visibilities = torch.zeros(len(xyz_), device=xyz.device)
-            xyz_w = ray_utils.ndc2world(xyz_, K)
-            for i in range(len(dataset.cam_train)):
-                ray_utils.compute_world_visiblility(visibilities,
-                    xyz_w, K, dataset.img_wh[1], dataset.img_wh[0],
-                    torch.FloatTensor(dataset.poses_train_ready[i+ts[0]]).to(xyz.device))
-            transient_sigmas[visibilities.view_as(transient_sigmas)==0] = -10
+        # # set invisible transient_sigmas to a very negative value
+        # if test_time and output_transient and 'dataset' in kwargs:
+        #     dataset = kwargs['dataset']
+        #     K = dataset.Ks[0].to(xyz.device)
+        #     visibilities = torch.zeros(len(xyz_), device=xyz.device)
+        #     xyz_w = ray_utils.ndc2world(xyz_, K)
+        #     for _cam_pose in dataset.poses_train_ready:
+        #         ray_utils.compute_world_visiblility(visibilities,
+        #             xyz_w, K, dataset.img_wh[1], dataset.img_wh[0],
+        #             torch.FloatTensor(_cam_pose).to(xyz.device))
+        #     transient_sigmas[visibilities.view_as(transient_sigmas)==0] = -10
 
         deltas = zs[:, 1:] - zs[:, :-1] # (N_rays, N_samples_-1)
         static_deltas = torch.cat([deltas, 100*torch.ones_like(deltas[:, :1])], -1)
@@ -458,17 +458,17 @@ def render_flow(models,
                     transient_flows_fw[zs>z_far] = 0
                     transient_flows_bw[zs>z_far] = 0
 
-        # set invisible transient_sigmas to a very negative value
-        if test_time and output_transient and 'dataset' in kwargs:
-            dataset = kwargs['dataset']
-            K = dataset.Ks[0].to(xyz.device)
-            visibilities = torch.zeros(len(xyz_), device=xyz.device)
-            xyz_w = ray_utils.ndc2world(xyz_, K)
-            for i in range(len(dataset.cam_train)):
-                ray_utils.compute_world_visiblility(visibilities,
-                    xyz_w, K, dataset.img_wh[1], dataset.img_wh[0],
-                    torch.FloatTensor(dataset.poses[i*dataset.N_frames+ts[0]]).to(xyz.device))
-            transient_sigmas[visibilities.view_as(transient_sigmas)==0] = -10
+        # # set invisible transient_sigmas to a very negative value
+        # if test_time and output_transient and 'dataset' in kwargs:
+        #     dataset = kwargs['dataset']
+        #     K = dataset.Ks[0].to(xyz.device)
+        #     visibilities = torch.zeros(len(xyz_), device=xyz.device)
+        #     xyz_w = ray_utils.ndc2world(xyz_, K)
+        #     for _cam_pose in dataset.poses_train_ready:
+        #         ray_utils.compute_world_visiblility(visibilities,
+        #             xyz_w, K, dataset.img_wh[1], dataset.img_wh[0],
+        #             torch.FloatTensor(_cam_pose).to(xyz.device))
+        #     transient_sigmas[visibilities.view_as(transient_sigmas)==0] = -10
 
         deltas = zs[:, 1:] - zs[:, :-1] # (N_rays, N_samples_-1)
         static_deltas = torch.cat([deltas, 100*torch.ones_like(deltas[:, :1])], -1)

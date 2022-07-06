@@ -217,7 +217,7 @@ class MonocularDataset(Dataset):
             self.poses = self.poses
             self.image_paths = self.image_paths
 
-        elif self.split == "eval_test":
+        elif self.split in ["eval_test", "eval_rendering"]:
             camdata = colmap_utils.read_cameras_binary(
                 os.path.join(self.raw_root_dir, "colmap_test", '2x/sparse/cameras.bin'))
             H = camdata[1].height
@@ -244,6 +244,10 @@ class MonocularDataset(Dataset):
             w2c_mats = np.stack(w2c_mats, 0)[perm]
             w2c_mats = w2c_mats[self.start_frame:self.end_frame] # (N_frames, 4, 4)
             poses = np.linalg.inv(w2c_mats)[:, :3] # (N_frames, 3, 4)
+            
+            if self.split == "eval_rendering":
+                poses = np.stack([poses[0] for _ in range(self.N_frames_train)])
+
             self.N_frames = len(poses)
 
             # Step 2: correct poses
@@ -266,22 +270,28 @@ class MonocularDataset(Dataset):
             self.Ps = self.K @ rt
             self.Ps = torch.FloatTensor(self.Ps).unsqueeze(0) # (1, N_frames, 3, 4)
             self.Ks = torch.FloatTensor(self.K).unsqueeze(0) # (1, 3, 3)
-            self.image_paths = sorted(glob.glob(
-                os.path.join(self.raw_root_dir, "colmap_test", '2x/sparse/images/2_*.png')
-            ))
-            self.mask_paths = sorted(glob.glob(
-                os.path.join(self.raw_root_dir, "test_mask", '2x/2_*.png')
-            ))
-            paths_train = sorted(glob.glob(
-                os.path.join(self.raw_root_dir, 'rgb/2x/0_*.png')
-            ))[self.start_frame:self.end_frame]
-            frame_ids_train = [
-                os.path.basename(fp).split("_")[-1] for fp in paths_train
-            ]
-            self.ts = [
-                frame_ids_train.index(os.path.basename(fp).split("_")[-1])
-                for fp in self.image_paths
-            ] 
+
+            if self.split == "eval_rendering":
+                self.image_paths = self.image_paths
+                self.mask_paths = self.mask_paths
+                self.ts = list(range(self.N_frames_train))
+            else:
+                self.image_paths = sorted(glob.glob(
+                    os.path.join(self.raw_root_dir, "colmap_test", '2x/sparse/images/2_*.png')
+                ))
+                self.mask_paths = sorted(glob.glob(
+                    os.path.join(self.raw_root_dir, "test_mask", '2x/2_*.png')
+                ))
+                paths_train = sorted(glob.glob(
+                    os.path.join(self.raw_root_dir, 'rgb/2x/0_*.png')
+                ))[self.start_frame:self.end_frame]
+                frame_ids_train = [
+                    os.path.basename(fp).split("_")[-1] for fp in paths_train
+                ]
+                self.ts = [
+                    frame_ids_train.index(os.path.basename(fp).split("_")[-1])
+                    for fp in self.image_paths
+                ] 
 
         elif self.split == 'test':
             self.poses_test = self.poses.copy()
@@ -348,7 +358,6 @@ class MonocularDataset(Dataset):
         elif self.split == "eval_kps":
             t = idx
             c2w = torch.FloatTensor(self.poses[idx])
-            print (idx, self.keypoints_files[idx])
             keypoints = torch.FloatTensor(self.keypoints[idx])
             assert keypoints is not None
 
@@ -358,22 +367,30 @@ class MonocularDataset(Dataset):
             shift_near = -min(-1.0, c2w[2, 3])
             rays_o, rays_d = ray_utils.get_ndc_rays(self.K, 1.0, 
                                                     shift_near, rays_o, rays_d)
-
             rays_t = t * torch.ones(len(rays_o), dtype=torch.long) # (h*w)
-
             rays = torch.cat([rays_o, rays_d], 1) # (h*w, 6)
+
+            directions_img = ray_utils.get_ray_directions(
+                self.img_wh[1], self.img_wh[0], self.K)
+            rays_o_img, rays_d_img = ray_utils.get_rays(directions_img , c2w)
+            rays_o_img, rays_d_img = ray_utils.get_ndc_rays(self.K, 1.0, 
+                                                    shift_near, rays_o_img , rays_d_img )
+            rays_t_img = t * torch.ones(len(rays_o_img), dtype=torch.long) # (h*w)
+            rays_img = torch.cat([rays_o_img, rays_d_img], 1) # (h*w, 6)
 
             sample = {
                 'rays': rays, 'ts': rays_t, 'c2w': c2w, 'keypoints': keypoints,
                 't': t, 'cam_ids': 0,
+                'rays_img': rays_img, "ts_img": rays_t_img,
             }
+            sample["image_id"] = os.path.basename(self.image_paths[idx])
 
         else:
             if self.split == 'val':
                 c2w = torch.FloatTensor(self.poses[self.N_frames//2])
                 t = self.N_frames//2
 
-            elif self.split == 'eval_train' or self.split == 'eval_test':
+            elif self.split in ['eval_train', 'eval_test', 'eval_rendering']:
                 c2w = torch.FloatTensor(self.poses[idx])
                 t = self.ts[idx]
                 directions = ray_utils.get_ray_directions(self.img_wh[1], self.img_wh[0], self.K)
